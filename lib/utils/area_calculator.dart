@@ -1,5 +1,5 @@
 import 'dart:math';
-import 'package:mapbox_gl/mapbox_gl.dart';
+import 'package:latlong2/latlong.dart';
 
 /// Utility class for calculating polygon areas on Earth's surface
 class AreaCalculator {

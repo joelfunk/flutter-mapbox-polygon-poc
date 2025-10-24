@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:mapbox_gl/mapbox_gl.dart';
+import 'package:flutter_map/flutter_map.dart';
+import 'package:latlong2/latlong.dart';
 import 'utils/area_calculator.dart';
 
 class MapScreen extends StatefulWidget {
@@ -10,14 +11,8 @@ class MapScreen extends StatefulWidget {
 }
 
 class _MapScreenState extends State<MapScreen> {
-  // TODO: Replace with your Mapbox access token
-  static const String MAPBOX_ACCESS_TOKEN = 'YOUR_MAPBOX_ACCESS_TOKEN_HERE';
-  
-  MapboxMapController? mapController;
+  final MapController _mapController = MapController();
   List<LatLng> polygonPoints = [];
-  List<Circle> circles = [];
-  Line? polygonLine;
-  Fill? polygonFill;
   double? calculatedAcres;
   bool isPolygonComplete = false;
 
@@ -28,19 +23,68 @@ class _MapScreenState extends State<MapScreen> {
         title: const Text('Mapbox Polygon Area Calculator'),
         elevation: 2,
       ),
-      body: Stack(
-        children: [
-          // Mapbox Map
-          MapboxMap(
-            accessToken: MAPBOX_ACCESS_TOKEN,
-            onMapCreated: _onMapCreated,
-            initialCameraPosition: const CameraPosition(
-              target: LatLng(37.7749, -122.4194), // San Francisco
-              zoom: 12.0,
+      body: SafeArea(
+        child: Stack(
+          children: [
+          // Flutter Map
+          FlutterMap(
+            mapController: _mapController,
+            options: MapOptions(
+              initialCenter: const LatLng(37.7749, -122.4194), // San Francisco
+              initialZoom: 12.0,
+              onTap: _onMapTapped,
             ),
-            onMapClick: _onMapTapped,
-            myLocationEnabled: true,
-            myLocationTrackingMode: MyLocationTrackingMode.None,
+            children: [
+              TileLayer(
+                urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.example.flutter_mapbox_polygon_poc',
+              ),
+              // Points layer
+              MarkerLayer(
+                markers: polygonPoints.map((point) => 
+                  Marker(
+                    point: point,
+                    width: 16,
+                    height: 16,
+                    child: Container(
+                      decoration: const BoxDecoration(
+                        color: Colors.blue,
+                        shape: BoxShape.circle,
+                        border: Border.symmetric(
+                          horizontal: BorderSide(color: Colors.white, width: 2),
+                          vertical: BorderSide(color: Colors.white, width: 2),
+                        ),
+                      ),
+                    ),
+                  ),
+                ).toList(),
+              ),
+              // Polygon layer
+              if (polygonPoints.length > 1)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: isPolygonComplete 
+                          ? [...polygonPoints, polygonPoints.first]
+                          : polygonPoints,
+                      color: Colors.blue,
+                      strokeWidth: 3,
+                    ),
+                  ],
+                ),
+              // Fill layer for completed polygon
+              if (isPolygonComplete && polygonPoints.length >= 3)
+                PolygonLayer(
+                  polygons: [
+                    Polygon(
+                      points: polygonPoints,
+                      color: Colors.blue.withOpacity(0.3),
+                      borderColor: Colors.blue,
+                      borderStrokeWidth: 3,
+                    ),
+                  ],
+                ),
+            ],
           ),
           
           // Area Display Card
@@ -149,102 +193,29 @@ class _MapScreenState extends State<MapScreen> {
             ),
           ),
         ],
+        ),
       ),
     );
-  }
-
-  void _onMapCreated(MapboxMapController controller) {
-    mapController = controller;
   }
 
   /// Handle map tap to add polygon points
-  void _onMapTapped(Point<double> point, LatLng coordinates) async {
+  void _onMapTapped(TapPosition tapPosition, LatLng point) async {
     if (isPolygonComplete) return; // Don't add points if polygon is complete
 
     setState(() {
-      polygonPoints.add(coordinates);
+      polygonPoints.add(point);
     });
-
-    // Add a circle marker for the point
-    await _addCircleMarker(coordinates);
-    
-    // Update the polygon line
-    if (polygonPoints.length > 1) {
-      await _updatePolygonLine();
-    }
-  }
-
-  /// Add a circle marker at the tapped location
-  Future<void> _addCircleMarker(LatLng position) async {
-    if (mapController == null) return;
-
-    await mapController!.addCircle(
-      CircleOptions(
-        geometry: position,
-        circleRadius: 8,
-        circleColor: '#3388ff',
-        circleStrokeColor: '#ffffff',
-        circleStrokeWidth: 2,
-      ),
-    );
-  }
-
-  /// Update the polygon line connecting all points
-  Future<void> _updatePolygonLine() async {
-    if (mapController == null) return;
-
-    // Remove existing line
-    if (polygonLine != null) {
-      await mapController!.removeLine(polygonLine!);
-    }
-
-    // Create new line
-    polygonLine = await mapController!.addLine(
-      LineOptions(
-        geometry: polygonPoints,
-        lineColor: '#3388ff',
-        lineWidth: 3,
-        lineOpacity: 0.8,
-      ),
-    );
   }
 
   /// Complete the polygon and calculate area
   Future<void> _completePolygon() async {
-    if (polygonPoints.length < 3 || mapController == null) return;
+    if (polygonPoints.length < 3) return;
 
     setState(() {
       isPolygonComplete = true;
     });
 
-    // Close the polygon by connecting to the first point
-    List<LatLng> closedPolygon = [...polygonPoints, polygonPoints.first];
-
-    // Remove the line and add a filled polygon
-    if (polygonLine != null) {
-      await mapController!.removeLine(polygonLine!);
-    }
-
-    // Add filled polygon
-    polygonFill = await mapController!.addFill(
-      FillOptions(
-        geometry: [closedPolygon],
-        fillColor: '#3388ff',
-        fillOpacity: 0.3,
-        fillOutlineColor: '#3388ff',
-      ),
-    );
-
-    // Add outline
-    polygonLine = await mapController!.addLine(
-      LineOptions(
-        geometry: closedPolygon,
-        lineColor: '#3388ff',
-        lineWidth: 3,
-      ),
-    );
-
-    // Calculate area
+    // Calculate area using the AreaCalculator
     double areaInAcres = AreaCalculator.calculatePolygonAreaInAcres(polygonPoints);
     
     setState(() {
@@ -254,28 +225,12 @@ class _MapScreenState extends State<MapScreen> {
 
   /// Clear the polygon and reset
   Future<void> _clearPolygon() async {
-    if (mapController == null) return;
-
-    // Remove all circles
-    await mapController!.clearCircles();
-    
-    // Remove line
-    if (polygonLine != null) {
-      await mapController!.removeLine(polygonLine!);
-      polygonLine = null;
-    }
-
-    // Remove fill
-    if (polygonFill != null) {
-      await mapController!.removeFill(polygonFill!);
-      polygonFill = null;
-    }
-
     setState(() {
       polygonPoints.clear();
-      circles.clear();
       calculatedAcres = null;
       isPolygonComplete = false;
     });
   }
 }
+
+
